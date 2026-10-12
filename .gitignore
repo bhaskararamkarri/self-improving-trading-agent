@@ -1,0 +1,40 @@
+# ==============================================================================
+# Git Ignore Rules - Secure Secret and Artifact Protection
+# ==============================================================================
+
+# Environment files & Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets.json
+config/secrets/
+
+# Python & Virtual Environment
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.pytest_cache/
+
+# Local Database & Logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+trading_agent.db
+trading_agent.log
+chroma_db/
+
+# OS & IDE Settings
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Binaries & Executables
+*.exe
+*.old

@@ -1,0 +1,97 @@
+//@version=5
+indicator("Self-Improving Trading Agent - MTF Confluence Generator", shorttitle="AGY_SignalGen", overlay=true)
+
+// =============================================================================
+// INPUT CONFIGURATION
+// =============================================================================
+daily_ema_len     = input.int(200, "Daily Macro Trend EMA Length", minval=50, maxval=300)
+trigger_ema_len   = input.int(20,  "Local Trigger EMA Length", minval=5, maxval=100)
+rsi_len           = input.int(14,  "RSI Calculation Length", minval=2)
+vol_ma_len        = input.int(20,  "Volume SMA Benchmark Length", minval=5)
+vol_mult          = input.float(1.2, "Volume Conviction Multiplier", minval=1.0, step=0.1)
+
+// Optional security secret for message body (when webhook headers are not supported by client)
+webhook_secret    = input.string("7L5sghivK2ywceT6yZk1o5mRl0wSoDIwbc/9GikGz38", "Agent Webhook Secret")
+
+// =============================================================================
+// MULTI-TIMEFRAME INDICATORS & DATA FETCHING
+// =============================================================================
+// 1. Macro Daily EMA 200 (Fetched with lookahead=false to prevent repainting)
+daily_ema200 = request.security(syminfo.tickerid, "1D", ta.ema(close, daily_ema_len), barmerge.gaps_off, barmerge.lookahead_off)
+
+// 2. Local Chart Indicators (Optimal timeframe: 4H or 1H)
+trigger_ema = ta.ema(close, trigger_ema_len)
+rsi_val     = ta.rsi(close, rsi_len)
+vol_sma     = ta.sma(volume, vol_ma_len)
+
+// =============================================================================
+// CONFLUENCE ENTRY LOGIC
+// =============================================================================
+// LONG CRITERIA:
+// 1. Macro Trend: Price above Daily EMA200
+// 2. Trigger: Close crosses UP above EMA20
+// 3. Momentum: RSI between 40 and 65 (healthy momentum, neither oversold nor exhausted)
+// 4. Conviction: Volume > 1.2x 20-period Volume SMA
+bull_macro     = close > daily_ema200
+cross_up_ema   = ta.crossover(close, trigger_ema)
+rsi_long_ok    = (rsi_val >= 40.0) and (rsi_val <= 65.0)
+vol_conviction = volume > (vol_mult * vol_sma)
+
+raw_long_condition = bull_macro and cross_up_ema and rsi_long_ok and vol_conviction
+
+// SHORT CRITERIA (Mirror):
+// 1. Macro Trend: Price below Daily EMA200
+// 2. Trigger: Close crosses DOWN below EMA20
+// 3. Momentum: RSI between 35 and 60
+// 4. Conviction: Volume > 1.2x 20-period Volume SMA
+bear_macro       = close < daily_ema200
+cross_down_ema   = ta.crossunder(close, trigger_ema)
+rsi_short_ok     = (rsi_val >= 35.0) and (rsi_val <= 60.0)
+
+raw_short_condition = bear_macro and cross_down_ema and rsi_short_ok and vol_conviction
+
+// =============================================================================
+// COOLDOWN LOGIC (Max 1 alert per ticker per calendar day)
+// =============================================================================
+var int last_alert_year  = 0
+var int last_alert_day   = 0
+
+current_year = year(time)
+current_day  = dayofyear(time)
+
+is_new_day = (current_year != last_alert_year) or (current_day != last_alert_day)
+
+long_entry_signal  = raw_long_condition and is_new_day
+short_entry_signal = raw_short_condition and is_new_day
+
+// Update state on trigger
+if long_entry_signal or short_entry_signal
+    last_alert_year := current_year
+    last_alert_day  := current_day
+
+// Dynamic payload construction
+long_payload = '{"ticker": "' + syminfo.ticker + '", "action": "buy", "price": ' + str.tostring(close, "#.##") + ', "timeframe": "' + timeframe.period + '", "secret": "' + webhook_secret + '"}'
+short_payload = '{"ticker": "' + syminfo.ticker + '", "action": "short", "price": ' + str.tostring(close, "#.##") + ', "timeframe": "' + timeframe.period + '", "secret": "' + webhook_secret + '"}'
+
+if long_entry_signal
+    alert(long_payload, alert.freq_once_per_bar_close)
+
+if short_entry_signal
+    alert(short_payload, alert.freq_once_per_bar_close)
+
+// =============================================================================
+// CHART VISUALIZATION
+// =============================================================================
+plot(daily_ema200, title="Daily Macro EMA 200", color=color.new(color.blue, 0), linewidth=2)
+plot(trigger_ema,  title="Local Trigger EMA 20", color=color.new(color.orange, 0), linewidth=1)
+
+plotshape(long_entry_signal, title="BUY Alert Trigger", location=location.belowbar, 
+          color=color.green, style=shape.triangleup, size=size.normal, text="BUY ALERT")
+plotshape(short_entry_signal, title="SELL/SHORT Alert Trigger", location=location.abovebar, 
+          color=color.red, style=shape.triangledown, size=size.normal, text="SHORT ALERT")
+
+// Static alertconditions for standard TradingView Alert Dialogue UI
+alertcondition(long_entry_signal, title="Agent BUY Signal Alert", 
+               message='{"ticker": "{{ticker}}", "action": "buy", "price": {{close}}, "timeframe": "{{interval}}"}')
+alertcondition(short_entry_signal, title="Agent SHORT Signal Alert", 
+               message='{"ticker": "{{ticker}}", "action": "short", "price": {{close}}, "timeframe": "{{interval}}"}')
